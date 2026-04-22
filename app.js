@@ -696,15 +696,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  BARCODE SCANNER  (canvas frame-grab → ZXing + BarcodeDetector)
+//  BARCODE SCANNER
+//  Engine priority:
+//    1. Chrome/Android built-in BarcodeDetector (fastest, zero deps)
+//    2. @zxing/browser  BrowserMultiFormatReader  (all other browsers)
 // ══════════════════════════════════════════════════════════════
 
-let scanTargetId  = null;
-let scanStream    = null;
-let scannerActive = false;
-let scanAnimFrame = null;
-let _scanCanvas   = null;
-let _scanCtx      = null;
+let scanTargetId   = null;
+let scanStream     = null;
+let scannerActive  = false;
+let scanAnimFrame  = null;
+let _scanCanvas    = null;
+let _scanCtx       = null;
+let _zxingControls = null;   // ZXingBrowser continuous-scan controls
 
 function setStatus(html) {
   document.getElementById('scanStatus').innerHTML = html;
@@ -717,38 +721,57 @@ async function openScanner(targetInputId = null) {
   document.getElementById('scannerOverlay').classList.add('open');
   stopStream();
 
+  // ── Decide engine ──────────────────────────────────────────
+  // Prefer native BarcodeDetector if available (Chrome 83+, Edge, Android WebView)
+  if (window.BarcodeDetector) {
+    await _startNativeDetector();
+  } else if (window.ZXingBrowser) {
+    await _startZXingBrowser();
+  } else {
+    // Fallback: try to load ZXingBrowser dynamically then start
+    setStatus("<i class='bx bx-loader-alt bx-spin'></i> Loading scan engine…");
+    try {
+      await _loadScript('https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js');
+      await _startZXingBrowser();
+    } catch (e) {
+      setStatus("⚠ Could not load barcode engine. Try Chrome or Edge.");
+    }
+  }
+}
+
+// ── Engine 1: native BarcodeDetector (Chrome/Android) ──────
+async function _startNativeDetector() {
   try {
     scanStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     });
-    const video = document.getElementById('scanVideo');
-    video.srcObject = scanStream;
-    video.setAttribute('playsinline', true);
-    await video.play();
-    scannerActive = true;
-    setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
-    populateCameras();
-    startScanLoop(video);
   } catch (err) {
-    console.error('Camera error:', err);
-    if (err.name === 'NotAllowedError') {
-      setStatus("⚠ Camera permission denied — click the 🔒 icon in your address bar, allow camera, then refresh.");
-    } else if (err.name === 'NotFoundError') {
-      setStatus("⚠ No camera found on this device.");
-    } else {
-      setStatus("⚠ " + err.message);
-    }
+    _camError(err); return;
   }
-}
 
-function startScanLoop(video) {
+  const video = document.getElementById('scanVideo');
+  video.srcObject = scanStream;
+  await video.play();
+  scannerActive = true;
+  setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
+  await populateCameras();
+
+  // Supported formats list (prevents "unknown format" error on some browsers)
+  let detector;
+  try {
+    const supported = await BarcodeDetector.getSupportedFormats();
+    detector = new BarcodeDetector({ formats: supported });
+  } catch (_) {
+    detector = new BarcodeDetector();
+  }
+
   if (!_scanCanvas) {
     _scanCanvas = document.createElement('canvas');
     _scanCtx    = _scanCanvas.getContext('2d');
   }
 
-  const tick = () => {
+  const tick = async () => {
     if (!scannerActive) return;
     if (video.readyState < 2 || video.videoWidth === 0) {
       scanAnimFrame = requestAnimationFrame(tick); return;
@@ -756,43 +779,99 @@ function startScanLoop(video) {
     _scanCanvas.width  = video.videoWidth;
     _scanCanvas.height = video.videoHeight;
     _scanCtx.drawImage(video, 0, 0);
-
-    // Engine 1: Chrome built-in BarcodeDetector (fastest)
-    if (window.BarcodeDetector) {
-      new BarcodeDetector().detect(_scanCanvas).then(codes => {
-        if (!scannerActive) return;
-        if (codes.length > 0) onScanResult(codes[0].rawValue);
-        else scanAnimFrame = requestAnimationFrame(tick);
-      }).catch(() => { scanAnimFrame = requestAnimationFrame(tick); });
-      return;
-    }
-
-    // Engine 2: ZXing luminance decode
-    if (window.ZXing) {
-      try {
-        const imgData = _scanCtx.getImageData(0, 0, _scanCanvas.width, _scanCanvas.height);
-        const lum     = new ZXing.RGBLuminanceSource(imgData.data, _scanCanvas.width, _scanCanvas.height);
-        const bmp     = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
-        const result  = new ZXing.MultiFormatReader().decode(bmp);
-        if (result) { onScanResult(result.getText()); return; }
-      } catch (_) {}
-      scanAnimFrame = requestAnimationFrame(tick);
-      return;
-    }
-
-    setStatus("⚠ No decode engine found — reload the page.");
+    try {
+      const codes = await detector.detect(_scanCanvas);
+      if (!scannerActive) return;
+      if (codes.length > 0) { onScanResult(codes[0].rawValue); return; }
+    } catch (_) {}
+    scanAnimFrame = requestAnimationFrame(tick);
   };
-
   scanAnimFrame = requestAnimationFrame(tick);
+}
+
+// ── Engine 2: @zxing/browser (Firefox, Safari, older Chrome) ─
+async function _startZXingBrowser() {
+  const video = document.getElementById('scanVideo');
+  try {
+    const reader = new ZXingBrowser.BrowserMultiFormatReader();
+    const devices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+
+    if (!devices.length) { setStatus("⚠ No camera found on this device."); return; }
+
+    // Populate camera selector
+    const sel = document.getElementById('camSelect');
+    sel.innerHTML = '';
+    devices.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId; o.textContent = d.label || `Camera ${i + 1}`;
+      sel.appendChild(o);
+    });
+
+    // Prefer back camera
+    const backCam = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
+    sel.value = backCam.deviceId;
+
+    setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
+
+    _zxingControls = await reader.decodeFromVideoDevice(
+      backCam.deviceId,
+      video,
+      (result, err) => {
+        if (result) onScanResult(result.getText());
+        // err is thrown every frame when no barcode found — ignore it
+      }
+    );
+
+    scannerActive = true;
+
+    // Allow camera switch via selector
+    sel.onchange = async () => {
+      if (_zxingControls) { _zxingControls.stop(); _zxingControls = null; }
+      setStatus("<i class='bx bx-loader-alt bx-spin'></i> Switching camera…");
+      _zxingControls = await reader.decodeFromVideoDevice(
+        sel.value, video,
+        (result, err) => { if (result) onScanResult(result.getText()); }
+      );
+      setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
+    };
+
+  } catch (err) {
+    _camError(err);
+  }
+}
+
+function _camError(err) {
+  console.error('Camera error:', err);
+  if (err.name === 'NotAllowedError')
+    setStatus("⚠ Camera permission denied — click the 🔒 in your address bar, allow camera, then refresh.");
+  else if (err.name === 'NotFoundError')
+    setStatus("⚠ No camera found on this device.");
+  else
+    setStatus("⚠ " + (err.message || err));
+}
+
+function _loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
 }
 
 function onScanResult(val) {
   if (!scannerActive) return;
   scannerActive = false;
+
+  // Stop both engine types
   if (scanAnimFrame) { cancelAnimationFrame(scanAnimFrame); scanAnimFrame = null; }
+  if (_zxingControls) { try { _zxingControls.stop(); } catch(_){} _zxingControls = null; }
+
   document.getElementById('srValue').textContent = val;
   document.getElementById('scanResult').style.display = 'flex';
-  setStatus("<i class='bx bx-check-circle' style=\"color:#3C91E6\"></i> Barcode detected!");
+  setStatus("<i class='bx bx-check-circle' style='color:#3C91E6'></i> Barcode detected!");
+
+  // Beep
   try {
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     const o = ac.createOscillator(), g = ac.createGain();
@@ -814,12 +893,15 @@ async function populateCameras() {
       o.value = d.deviceId; o.textContent = d.label || `Camera ${i + 1}`;
       sel.appendChild(o);
     });
-    const tid = scanStream && scanStream.getVideoTracks()[0] && scanStream.getVideoTracks()[0].getSettings().deviceId;
+    const tid = scanStream && scanStream.getVideoTracks()[0]?.getSettings().deviceId;
     if (tid) sel.value = tid;
   } catch (_) {}
 }
 
 async function switchCamera(deviceId) {
+  // Only used with native BarcodeDetector engine
+  // ZXing engine handles its own switching via sel.onchange
+  if (_zxingControls) return;
   stopStream(); scannerActive = false;
   document.getElementById('scanResult').style.display = 'none';
   setStatus("<i class='bx bx-loader-alt bx-spin'></i> Switching camera…");
@@ -829,22 +911,23 @@ async function switchCamera(deviceId) {
     video.srcObject = scanStream; await video.play();
     scannerActive = true;
     setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
-    startScanLoop(video);
+    await _startNativeDetector();
   } catch (e) { setStatus("⚠ Could not switch camera."); }
 }
 
 function stopStream() {
   if (scanAnimFrame) { cancelAnimationFrame(scanAnimFrame); scanAnimFrame = null; }
+  if (_zxingControls) { try { _zxingControls.stop(); } catch(_){} _zxingControls = null; }
   if (scanStream)    { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
   const v = document.getElementById('scanVideo');
-  if (v) v.srcObject = null;
+  if (v) { v.srcObject = null; v.load(); }
 }
 
 function applyScan() {
   const val = document.getElementById('srValue').textContent.trim();
   closeScanner();
 
-  // ── 1. If a specific input field requested the scan, fill it ──
+  // ── If a form field requested the scan → fill it ──
   if (scanTargetId) {
     const el = document.getElementById(scanTargetId);
     if (el) { el.value = val; el.dispatchEvent(new Event('input')); el.focus(); }
@@ -852,63 +935,53 @@ function applyScan() {
     return;
   }
 
-  // ── 2. No target input — smart lookup across all collections ──
-  // Try to match scanned value against user ID, pickup ID, material name, or reward name
-
-  // Check users
+  // ── Standalone scan → smart lookup in Firebase cache ──
   const matchUser = cache.users.find(u =>
-    u.id === val || (u.phone || '').replace(/\D/g,'') === val.replace(/\D/g,'') || u.email === val
+    u.id === val ||
+    (u.phone || '').replace(/\D/g,'') === val.replace(/\D/g,'') ||
+    u.email === val
   );
   if (matchUser) {
-    toast(`User found: ${matchUser.name} — opening profile`);
+    toast(`User found: ${matchUser.name}`);
     navigate('users');
-    setTimeout(() => {
-      document.querySelector('#page-users .t-search').value = matchUser.name;
-      filterUsers(matchUser.name);
-    }, 150);
+    setTimeout(() => { document.querySelector('#page-users .t-search').value = matchUser.name; filterUsers(matchUser.name); }, 150);
     return;
   }
 
-  // Check pickups
   const matchPickup = cache.pickups.find(p => p.id === val);
   if (matchPickup) {
-    toast(`Pickup found: ${matchPickup.id} — opening record`);
+    toast(`Pickup found: ${matchPickup.id}`);
     navigate('pickups');
     setTimeout(() => editPickup(matchPickup.id), 200);
     return;
   }
 
-  // Check materials
   const matchMat = cache.materials.find(m =>
-    m.id === val || (m.barcode && m.barcode === val) ||
-    (m.name || '').toLowerCase() === val.toLowerCase()
+    m.id === val || (m.barcode && m.barcode === val) || (m.name||'').toLowerCase() === val.toLowerCase()
   );
   if (matchMat) {
-    toast(`Material found: ${matchMat.name} — opening record`);
+    toast(`Material found: ${matchMat.name}`);
     navigate('recycling');
     setTimeout(() => editMat(matchMat.id), 200);
     return;
   }
 
-  // Check rewards
   const matchRew = cache.rewards.find(r =>
-    r.id === val || (r.barcode && r.barcode === val) ||
-    (r.name || '').toLowerCase() === val.toLowerCase()
+    r.id === val || (r.barcode && r.barcode === val) || (r.name||'').toLowerCase() === val.toLowerCase()
   );
   if (matchRew) {
-    toast(`Reward found: ${matchRew.name} — opening record`);
+    toast(`Reward found: ${matchRew.name}`);
     navigate('rewards');
     setTimeout(() => editRew(matchRew.id), 200);
     return;
   }
 
-  // ── 3. Nothing matched — show the value and offer to create a new pickup ──
-  toast(`Scanned: ${val.length > 30 ? val.slice(0,30)+'…' : val} — no match found`, 'error');
-  if (confirm(`No record matched barcode:\n"${val}"\n\nCreate a new Pickup with this ID?`)) {
+  // Nothing matched
+  toast(`Scanned: ${val.slice(0,30)} — no match found`, 'error');
+  if (confirm(`No record matched barcode:\n"${val}"\n\nCreate a new Pickup with this as reference?`)) {
     navigate('pickups');
     setTimeout(() => {
       openModal('pickup');
-      // Pre-fill the address field with scanned value as a reference
       const addr = document.getElementById('fp_a');
       if (addr) { addr.value = val; addr.focus(); }
     }, 200);
