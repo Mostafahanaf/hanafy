@@ -1,4 +1,4 @@
-══════════════════════════════════════════════════════════════
+//══════════════════════════════════════════════════════════════
 //  Verdi Recycling Admin — app.js
 //  Data is fetched LIVE from Firebase Firestore.
 //  Your Flutter app writes to the same Firestore project,
