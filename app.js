@@ -696,7 +696,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  BARCODE SCANNER  (canvas frame-grab → ZXing + BarcodeDetector)
+//  ✅ FULL FIXED BARCODE SCANNER (AUTO ACTION WORKING)
 // ══════════════════════════════════════════════════════════════
 
 let scanTargetId  = null;
@@ -710,38 +710,44 @@ function setStatus(html) {
   document.getElementById('scanStatus').innerHTML = html;
 }
 
+// ─────────────────────────────────────────────
+// OPEN SCANNER
+// ─────────────────────────────────────────────
 async function openScanner(targetInputId) {
   scanTargetId = targetInputId;
+
   document.getElementById('scanResult').style.display = 'none';
-  setStatus("<i class='bx bx-loader-alt bx-spin'></i> Requesting camera…");
+  setStatus("📷 Opening camera...");
   document.getElementById('scannerOverlay').classList.add('open');
+
   stopStream();
 
   try {
     scanStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: { ideal: "environment" } },
       audio: false
     });
+
     const video = document.getElementById('scanVideo');
     video.srcObject = scanStream;
     video.setAttribute('playsinline', true);
     await video.play();
+
     scannerActive = true;
-    setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
+    setStatus("✅ Camera ready — scan barcode");
+
     populateCameras();
     startScanLoop(video);
+
   } catch (err) {
-    console.error('Camera error:', err);
-    if (err.name === 'NotAllowedError') {
-      setStatus("⚠ Camera permission denied — click the 🔒 icon in your address bar, allow camera, then refresh.");
-    } else if (err.name === 'NotFoundError') {
-      setStatus("⚠ No camera found on this device.");
-    } else {
-      setStatus("⚠ " + err.message);
-    }
+    console.error(err);
+    setStatus("❌ Camera error: " + err.message);
   }
 }
 
+// ─────────────────────────────────────────────
+// SCAN LOOP
+// ─────────────────────────────────────────────
 function startScanLoop(video) {
   if (!_scanCanvas) {
     _scanCanvas = document.createElement('canvas');
@@ -750,112 +756,184 @@ function startScanLoop(video) {
 
   const tick = () => {
     if (!scannerActive) return;
+
     if (video.readyState < 2 || video.videoWidth === 0) {
-      scanAnimFrame = requestAnimationFrame(tick); return;
+      scanAnimFrame = requestAnimationFrame(tick);
+      return;
     }
+
     _scanCanvas.width  = video.videoWidth;
     _scanCanvas.height = video.videoHeight;
     _scanCtx.drawImage(video, 0, 0);
 
-    // Engine 1: Chrome built-in BarcodeDetector (fastest)
+    // 🔥 Engine 1 — BarcodeDetector (fast)
     if (window.BarcodeDetector) {
-      new BarcodeDetector().detect(_scanCanvas).then(codes => {
-        if (!scannerActive) return;
-        if (codes.length > 0) onScanResult(codes[0].rawValue);
-        else scanAnimFrame = requestAnimationFrame(tick);
-      }).catch(() => { scanAnimFrame = requestAnimationFrame(tick); });
+      new BarcodeDetector({
+        formats: ['qr_code','ean_13','code_128','upc_a']
+      }).detect(_scanCanvas)
+        .then(codes => {
+          if (!scannerActive) return;
+
+          if (codes.length > 0) {
+            onScanResult(codes[0].rawValue);
+          } else {
+            scanAnimFrame = requestAnimationFrame(tick);
+          }
+        })
+        .catch(() => scanAnimFrame = requestAnimationFrame(tick));
+
       return;
     }
 
-    // Engine 2: ZXing luminance decode
+    // 🔥 Engine 2 — ZXing fallback
     if (window.ZXing) {
       try {
         const imgData = _scanCtx.getImageData(0, 0, _scanCanvas.width, _scanCanvas.height);
         const lum     = new ZXing.RGBLuminanceSource(imgData.data, _scanCanvas.width, _scanCanvas.height);
         const bmp     = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
         const result  = new ZXing.MultiFormatReader().decode(bmp);
-        if (result) { onScanResult(result.getText()); return; }
+
+        if (result) {
+          onScanResult(result.getText());
+          return;
+        }
       } catch (_) {}
+
       scanAnimFrame = requestAnimationFrame(tick);
       return;
     }
 
-    setStatus("⚠ No decode engine found — reload the page.");
+    setStatus("⚠ No scanner engine found");
   };
 
   scanAnimFrame = requestAnimationFrame(tick);
 }
 
+// ─────────────────────────────────────────────
+// 🔥 FIXED RESULT HANDLER (MAIN PROBLEM FIXED)
+// ─────────────────────────────────────────────
 function onScanResult(val) {
   if (!scannerActive) return;
+
+  console.log("SCANNED:", val);
+
   scannerActive = false;
-  if (scanAnimFrame) { cancelAnimationFrame(scanAnimFrame); scanAnimFrame = null; }
+
+  if (scanAnimFrame) {
+    cancelAnimationFrame(scanAnimFrame);
+    scanAnimFrame = null;
+  }
+
+  // ✅ AUTO APPLY VALUE TO INPUT
+  if (scanTargetId) {
+    const input = document.getElementById(scanTargetId);
+    if (input) {
+      input.value = val;
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+    }
+  }
+
+  // UI feedback
   document.getElementById('srValue').textContent = val;
   document.getElementById('scanResult').style.display = 'flex';
-  setStatus("<i class='bx bx-check-circle' style=\"color:#3C91E6\"></i> Barcode detected!");
+
+  setStatus("✅ Barcode detected!");
+
+  // 🔊 Sound
   try {
     const ac = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.connect(g); g.connect(ac.destination);
-    o.frequency.value = 880;
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+
+    o.connect(g);
+    g.connect(ac.destination);
+
+    o.frequency.value = 1000;
     g.gain.setValueAtTime(0.3, ac.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.25);
-    o.start(); o.stop(ac.currentTime + 0.25);
+
+    o.start();
+    o.stop(ac.currentTime + 0.2);
   } catch (_) {}
+
+  toast("Scanned: " + val);
+
+  // 🔥 AUTO CLOSE
+  setTimeout(() => {
+    closeScanner();
+  }, 700);
 }
 
+// ─────────────────────────────────────────────
+// CAMERA LIST
+// ─────────────────────────────────────────────
 async function populateCameras() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const sel = document.getElementById('camSelect');
     sel.innerHTML = '';
-    devices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
-      const o = document.createElement('option');
-      o.value = d.deviceId; o.textContent = d.label || `Camera ${i + 1}`;
-      sel.appendChild(o);
-    });
-    const tid = scanStream && scanStream.getVideoTracks()[0] && scanStream.getVideoTracks()[0].getSettings().deviceId;
-    if (tid) sel.value = tid;
+
+    devices
+      .filter(d => d.kind === 'videoinput')
+      .forEach((d, i) => {
+        const o = document.createElement('option');
+        o.value = d.deviceId;
+        o.textContent = d.label || `Camera ${i + 1}`;
+        sel.appendChild(o);
+      });
   } catch (_) {}
 }
 
+// ─────────────────────────────────────────────
+// SWITCH CAMERA
+// ─────────────────────────────────────────────
 async function switchCamera(deviceId) {
-  stopStream(); scannerActive = false;
-  document.getElementById('scanResult').style.display = 'none';
-  setStatus("<i class='bx bx-loader-alt bx-spin'></i> Switching camera…");
+  stopStream();
+
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } }
+    });
+
     const video = document.getElementById('scanVideo');
-    video.srcObject = scanStream; await video.play();
+    video.srcObject = scanStream;
+    await video.play();
+
     scannerActive = true;
-    setStatus("<i class='bx bx-camera'></i> Camera active — hold barcode steady…");
     startScanLoop(video);
-  } catch (e) { setStatus("⚠ Could not switch camera."); }
+
+  } catch (e) {
+    setStatus("⚠ Cannot switch camera");
+  }
 }
 
+// ─────────────────────────────────────────────
+// STOP CAMERA
+// ─────────────────────────────────────────────
 function stopStream() {
-  if (scanAnimFrame) { cancelAnimationFrame(scanAnimFrame); scanAnimFrame = null; }
-  if (scanStream)    { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  if (scanAnimFrame) cancelAnimationFrame(scanAnimFrame);
+
+  if (scanStream) {
+    scanStream.getTracks().forEach(t => t.stop());
+    scanStream = null;
+  }
+
   const v = document.getElementById('scanVideo');
   if (v) v.srcObject = null;
 }
 
-function applyScan() {
-  const val = document.getElementById('srValue').textContent;
-  if (scanTargetId) {
-    const el = document.getElementById(scanTargetId);
-    if (el) { el.value = val; el.dispatchEvent(new Event('input')); el.focus(); }
-  }
-  closeScanner();
-  toast('Barcode applied: ' + (val.length > 30 ? val.slice(0,30)+'…' : val));
-}
-
+// ─────────────────────────────────────────────
+// CLOSE SCANNER
+// ─────────────────────────────────────────────
 function closeScanner() {
   scannerActive = false;
   stopStream();
   document.getElementById('scannerOverlay').classList.remove('open');
 }
 
+// CLICK OUTSIDE CLOSE
 document.getElementById('scannerOverlay').addEventListener('click', e => {
-  if (e.target === document.getElementById('scannerOverlay')) closeScanner();
+  if (e.target === document.getElementById('scannerOverlay')) {
+    closeScanner();
+  }
 });
