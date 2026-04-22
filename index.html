@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Verdi — Recycling Admin Dashboard</title>
+  <link href="https://unpkg.com/boxicons@2.0.9/css/boxicons.min.css" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Clash+Display:wght@400;500;600;700&family=Satoshi:wght@300;400;500;700&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/apexcharts/3.35.5/apexcharts.min.js"></script>
+  <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
+  <link rel="stylesheet" href="./style.css"/>
+</head>
+<body>
+
+<!-- ══ SIDEBAR ══ -->
+<section id="sidebar">
+  <div class="brand">
+    <div class="brand-icon"><i class='bx bx-leaf'></i></div>
+    <div>
+      <div class="brand-name">Verdi</div>
+      <div class="brand-sub">Recycling Admin</div>
+    </div>
+  </div>
+
+  <div class="side-section">
+    <div class="side-label">Overview</div>
+    <ul class="side-menu">
+      <li class="active" data-page="dashboard"><a href="#"><i class='bx bxs-dashboard'></i><span>Dashboard</span></a></li>
+      <li data-page="analytics"><a href="#"><i class='bx bxs-doughnut-chart'></i><span>Analytics</span></a></li>
+    </ul>
+  </div>
+  <div class="side-section" style="margin-top:8px">
+    <div class="side-label">Management</div>
+    <ul class="side-menu">
+      <li data-page="users"><a href="#"><i class='bx bxs-group'></i><span>Users</span></a></li>
+      <li data-page="pickups"><a href="#"><i class='bx bxs-truck'></i><span>Pickups</span></a></li>
+      <li data-page="recycling"><a href="#"><i class='bx bx-recycle'></i><span>Materials</span></a></li>
+      <li data-page="rewards"><a href="#"><i class='bx bxs-star'></i><span>Rewards</span></a></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-footer">
+    <a href="#" class="settings-link"><i class='bx bx-cog'></i><span>Settings</span></a>
+    <a href="#" class="logout-link"><i class='bx bx-log-out'></i><span>Logout</span></a>
+  </div>
+</section>
+
+<!-- ══ CONTENT ══ -->
+<section id="content">
+
+  <!-- NAV -->
+  <nav>
+    <button id="menuToggle" class="nav-toggle"><i class='bx bx-menu'></i></button>
+    <div class="nav-search">
+      <i class='bx bx-search'></i>
+      <input type="text" placeholder="Search anything…"/>
+    </div>
+    <div class="nav-right">
+      <div id="darkToggle" class="dark-toggle" title="Toggle dark mode"></div>
+      <button class="nav-icon-btn"><i class='bx bx-bell'></i><span class="badge">3</span></button>
+      <div class="nav-avatar" id="s-users">0</div>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- ══ DASHBOARD ══ -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header">
+        <div>
+          <h1>Dashboard</h1>
+          <div class="breadcrumb"><i class='bx bx-home-alt'></i> Home <i class='bx bx-chevron-right'></i><span>Overview</span></div>
+        </div>
+        <button class="btn btn-primary" onclick="refreshAll()"><i class='bx bx-refresh'></i> Refresh Data</button>
+      </div>
+
+      <!-- Loading indicator -->
+      <div id="loadingBar" class="loading-bar" style="display:none">
+        <i class='bx bx-loader-alt bx-spin'></i> Fetching latest data from Firebase…
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card" style="animation-delay:.0s">
+          <div class="stat-icon si-green"><i class='bx bxs-group'></i></div>
+          <div><div class="stat-value" id="s-users-count">—</div>
+          <div class="stat-label">Total Users</div>
+          <div class="stat-change up"><i class='bx bx-trending-up'></i> Live from Firebase</div></div>
+        </div>
+        <div class="stat-card" style="animation-delay:.08s">
+          <div class="stat-icon si-teal"><i class='bx bxs-truck'></i></div>
+          <div><div class="stat-value" id="s-pickups">—</div>
+          <div class="stat-label">Pickups</div>
+          <div class="stat-change up"><i class='bx bx-trending-up'></i> Live from Firebase</div></div>
+        </div>
+        <div class="stat-card" style="animation-delay:.16s">
+          <div class="stat-icon si-amber"><i class='bx bx-package'></i></div>
+          <div><div class="stat-value" id="s-kg">—</div>
+          <div class="stat-label">Kg Recycled</div>
+          <div class="stat-change up"><i class='bx bx-trending-up'></i> Live from Firebase</div></div>
+        </div>
+        <div class="stat-card" style="animation-delay:.24s">
+          <div class="stat-icon si-red"><i class='bx bxs-star'></i></div>
+          <div><div class="stat-value" id="s-pts">—</div>
+          <div class="stat-label">Points Awarded</div>
+          <div class="stat-change up"><i class='bx bx-trending-up'></i> Live from Firebase</div></div>
+        </div>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-hdr"><h3>Pickup Activity</h3><span>Monthly trend</span></div>
+          <div id="areaChart"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-hdr"><h3>Material Mix</h3><span>By category</span></div>
+          <div id="donutChart"></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-toolbar"><h3>Recent Pickups</h3></div>
+        <div style="overflow-x:auto">
+          <table id="recentTbl">
+            <tbody>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Material</th>
+                <th>Weight</th>
+                <th>Status</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ USERS ══ -->
+    <div class="page" id="page-users">
+      <div class="page-header">
+        <div>
+          <h1>Users</h1>
+          <div class="breadcrumb">
+            <i class='bx bx-home-alt'></i> Home <i class='bx bx-chevron-right'></i><span>Users</span>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('user')"><i class='bx bx-plus'></i> Add User</button>
+      </div>
+      <div class="table-card">
+        <div class="table-toolbar">
+          <h3>All Users</h3>
+          <div class="table-actions">
+            <input class="t-search" type="text" placeholder="Search users…" oninput="filterUsers(this.value)"/>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table id="usersTbl">
+            <tbody>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Role</th>
+                <th>Points</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ PICKUPS ══ -->
+    <div class="page" id="page-pickups">
+      <div class="page-header">
+        <div>
+          <h1>Pickups</h1>
+          <div class="breadcrumb">
+            <i class='bx bx-home-alt'></i> Home <i class='bx bx-chevron-right'></i>
+            <span>Pickups</span>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('pickup')"><i class='bx bx-plus'>
+        </i> Add Pickup</button>
+      </div>
+      <div class="table-card">
+        <div class="table-toolbar">
+          <h3>All Pickup Requests</h3>
+          <div class="table-actions">
+            <input class="t-search" type="text" placeholder="Search pickups…" oninput="filterPickups(this.value)"/>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table id="pickupsTbl">
+            <tbody>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Address</th>
+                <th>Material</th>
+                <th>Weight (kg)</th>
+                <th>Points</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+          </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MATERIALS ══ -->
+    <div class="page" id="page-recycling">
+      <div class="page-header">
+        <div>
+          <h1>Recyclable Materials</h1>
+          <div class="breadcrumb">
+            <i class='bx bx-home-alt'></i> Home <i class='bx bx-chevron-right'></i>
+            <span>Materials</span>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('material')"><i class='bx bx-plus'></i> Add Material</button>
+      </div>
+      <div class="recycle-grid" id="matGrid">
+
+      </div>
+    </div>
+
+    <!-- ══ ANALYTICS ══ -->
+    <div class="page" id="page-analytics">
+      <div class="page-header">
+        <div>
+          <h1>Analytics</h1>
+          <div class="breadcrumb"><i class='bx bx-home-alt'></i> Home <i class='bx bx-chevron-right'></i>
+            <span>Analytics</span>
+          </div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon si-green">
+            <i class='bx bx-trending-up'></i>
+          </div>
+          <div>
+            <div class="stat-value">37%</div>
+            <div class="stat-label">Egypt Recycling Rate 2024</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon si-amber"><i class='bx bx-bullseye'></i>
+          </div>
+          <div>
+            <div class="stat-value">60%</div>
+            <div class="stat-label">Target Rate by 2027</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon si-teal"><i class='bx bxs-buildings'></i>
+          </div>
+          <div>
+            <div class="stat-value">15–20%</div>
+            <div class="stat-label">Household Participation</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon si-red">
+            <i class='bx bx-broadcast'></i>
+          </div>
+          <div>
+            <div class="stat-value">30–40%</div>
+            <div class="stat-label">Public Awareness</div>
+          </div>
+        </div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-hdr">
+            <h3>Egypt Recycling Rate Growth</h3>
+            <span>2018 – 2027 (target)</span>
+          </div><div id="growthChart">
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-hdr">
+            <h3>Top Recycled Materials</h3>
+            <span>By volume (kg) — Live</span>
+          </div>
+          <div id="barChart">
+          </div>
+        </div>
+      </div>
+      <div class="chart-card" style="margin-top:20px">
+        <div class="chart-hdr">
+          <h3>User Engagement — Points Earned per Month</h3>
+          <span>Aggregated from Firebase</span>
+        </div>
+        <div id="engChart">
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ REWARDS ══ -->
+    <div class="page" id="page-rewards">
+      <div class="page-header">
+        <div>
+          <h1>Rewards</h1>
+          <div class="breadcrumb"><i class='bx bx-home-alt'></i> Home <i class='bx bx-chevron-right'></i>
+            <span>Rewards</span>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('reward')"><i class='bx bx-plus'></i> Add Reward</button>
+      </div>
+      <div class="table-card">
+        <div class="table-toolbar">
+          <h3>Reward Catalogue</h3>
+        </div>
+        <div style="overflow-x:auto">
+          <table id="rewardsTbl">
+            <tbody>
+            <thead>
+              <tr>
+                <th>Reward</th>
+                <th>Partner</th>
+                <th>Points Cost</th>
+                <th>Stock</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</section>
+
+<!-- ══ MODAL ══ -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeOutside(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="mTitle">Add</h2>
+      <button class="modal-close" onclick="closeModal()"><i class='bx bx-x'></i></button>
+    </div>
+    <div class="modal-body" id="mBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="mSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ BARCODE SCANNER MODAL ══ -->
+<div class="modal-overlay" id="scannerOverlay">
+  <div class="modal scanner-modal">
+    <div class="modal-header">
+      <h2><i class='bx bx-barcode-reader'></i> Scan Barcode</h2>
+      <button class="modal-close" onclick="closeScanner()"><i class='bx bx-x'></i></button>
+    </div>
+    <div class="modal-body" style="padding:16px 24px">
+      <div class="scanner-wrap">
+        <video id="scanVideo" playsinline></video>
+        <div class="scan-line"></div>
+        <div class="scan-corners">
+          <span class="corner tl"></span><span class="corner tr"></span>
+          <span class="corner bl"></span><span class="corner br"></span>
+        </div>
+      </div>
+      <div id="scanStatus" class="scan-status"><i class='bx bx-loader-alt bx-spin'></i> Initialising camera…</div>
+      <div class="scan-tip">Point the camera at any barcode or QR code</div>
+
+      <div id="scanResult" class="scan-result" style="display:none">
+        <i class='bx bx-check-circle'></i>
+        <div>
+          <div class="sr-label">Scanned value</div>
+          <div class="sr-value" id="srValue"></div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="applyScan()">Use this</button>
+      </div>
+
+      <!-- Camera selector -->
+      <div class="fg" style="margin-top:12px" id="camSelectWrap">
+        <label>Camera</label>
+        <select class="fc" id="camSelect" onchange="switchCamera(this.value)"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeScanner()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOASTS ══ -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- ══ Firebase SDK (v9 compat mode) ══ -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
