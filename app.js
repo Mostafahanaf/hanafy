@@ -710,7 +710,7 @@ function setStatus(html) {
   document.getElementById('scanStatus').innerHTML = html;
 }
 
-async function openScanner(targetInputId) {
+async function openScanner(targetInputId = null) {
   scanTargetId = targetInputId;
   document.getElementById('scanResult').style.display = 'none';
   setStatus("<i class='bx bx-loader-alt bx-spin'></i> Requesting camera…");
@@ -841,13 +841,78 @@ function stopStream() {
 }
 
 function applyScan() {
-  const val = document.getElementById('srValue').textContent;
+  const val = document.getElementById('srValue').textContent.trim();
+  closeScanner();
+
+  // ── 1. If a specific input field requested the scan, fill it ──
   if (scanTargetId) {
     const el = document.getElementById(scanTargetId);
     if (el) { el.value = val; el.dispatchEvent(new Event('input')); el.focus(); }
+    toast('Barcode applied ✓');
+    return;
   }
-  closeScanner();
-  toast('Barcode applied: ' + (val.length > 30 ? val.slice(0,30)+'…' : val));
+
+  // ── 2. No target input — smart lookup across all collections ──
+  // Try to match scanned value against user ID, pickup ID, material name, or reward name
+
+  // Check users
+  const matchUser = cache.users.find(u =>
+    u.id === val || (u.phone || '').replace(/\D/g,'') === val.replace(/\D/g,'') || u.email === val
+  );
+  if (matchUser) {
+    toast(`User found: ${matchUser.name} — opening profile`);
+    navigate('users');
+    setTimeout(() => {
+      document.querySelector('#page-users .t-search').value = matchUser.name;
+      filterUsers(matchUser.name);
+    }, 150);
+    return;
+  }
+
+  // Check pickups
+  const matchPickup = cache.pickups.find(p => p.id === val);
+  if (matchPickup) {
+    toast(`Pickup found: ${matchPickup.id} — opening record`);
+    navigate('pickups');
+    setTimeout(() => editPickup(matchPickup.id), 200);
+    return;
+  }
+
+  // Check materials
+  const matchMat = cache.materials.find(m =>
+    m.id === val || (m.barcode && m.barcode === val) ||
+    (m.name || '').toLowerCase() === val.toLowerCase()
+  );
+  if (matchMat) {
+    toast(`Material found: ${matchMat.name} — opening record`);
+    navigate('recycling');
+    setTimeout(() => editMat(matchMat.id), 200);
+    return;
+  }
+
+  // Check rewards
+  const matchRew = cache.rewards.find(r =>
+    r.id === val || (r.barcode && r.barcode === val) ||
+    (r.name || '').toLowerCase() === val.toLowerCase()
+  );
+  if (matchRew) {
+    toast(`Reward found: ${matchRew.name} — opening record`);
+    navigate('rewards');
+    setTimeout(() => editRew(matchRew.id), 200);
+    return;
+  }
+
+  // ── 3. Nothing matched — show the value and offer to create a new pickup ──
+  toast(`Scanned: ${val.length > 30 ? val.slice(0,30)+'…' : val} — no match found`, 'error');
+  if (confirm(`No record matched barcode:\n"${val}"\n\nCreate a new Pickup with this ID?`)) {
+    navigate('pickups');
+    setTimeout(() => {
+      openModal('pickup');
+      // Pre-fill the address field with scanned value as a reference
+      const addr = document.getElementById('fp_a');
+      if (addr) { addr.value = val; addr.focus(); }
+    }, 200);
+  }
 }
 
 function closeScanner() {
